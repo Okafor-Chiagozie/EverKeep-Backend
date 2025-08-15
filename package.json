@@ -6,7 +6,7 @@
     "scripts": {
         "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
         "build": "tsc --project tsconfig.json",
-        "start": "npx prisma generate && node dist/server.js",
+        "start": "node dist/server.js",
         "lint": "eslint src/**/*.ts",
         "lint:fix": "eslint src/**/*.ts --fix",
         "format": "prettier --write src/**/*.ts",
