@@ -44,4 +44,4 @@ process.on('SIGTERM', async () => {
 });
 
 export default prisma;
-export { prisma };
+export { prisma };                                                                                    
