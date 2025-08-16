@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../middleware/error.middleware';
 import { prisma } from '../config/database';
+import { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { AppError } from '../utils/appError';
 
 const toApi = (n: any) => ({
   id: n.id,
@@ -12,25 +14,31 @@ const toApi = (n: any) => ({
   updated_at: n.updatedAt,
 });
 
-export const listNotifications = asyncHandler(async (req: Request, res: Response) => {
-  const { pageSize = 10, pageNumber = 1, user_id, title, content } = req.query as any;
+export const getNotifications = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const user_id = req.user?.userId;
+  if (!user_id) throw new AppError('Unauthorized', 401);
+
+  const { pageSize = 10, pageNumber = 1 } = req.query as any;
   const take = Number(pageSize);
   const skip = (Number(pageNumber) - 1) * take;
 
-  const where: any = { deletedAt: null };
-  if (user_id) where.userId = user_id;
-  if (title) where.title = { contains: title, mode: 'insensitive' };
-  if (content) where.content = { contains: content, mode: 'insensitive' };
+  // Simplified query for MongoDB - removed deletedAt check
+  const where: any = {};
 
   const [rows, totalCount] = await Promise.all([
-    prisma.notification.findMany({ where, skip, take, orderBy: { timestamp: 'desc' } }),
-    prisma.notification.count({ where }),
+    prisma.notification.findMany({
+      where: { ...where, userId: user_id },
+      skip,
+      take,
+      orderBy: { timestamp: 'desc' },
+    }),
+    prisma.notification.count({ where: { ...where, userId: user_id } }),
   ]);
 
   res.status(200).json({
     success: true,
     message: 'Notifications retrieved successfully',
-    data: rows.map(toApi),
+    data: rows,
     totalCount,
     totalPages: Math.ceil(totalCount / take),
     timestamp: new Date().toISOString(),
@@ -49,8 +57,17 @@ export const deleteNotification = asyncHandler(async (req: Request, res: Respons
   res.status(200).json({ success: true, message: 'Notification deleted successfully', data: null, timestamp: new Date().toISOString() });
 });
 
-export const notificationCount = asyncHandler(async (req: Request, res: Response) => {
-  const { user_id } = req.query as any;
-  const count = await prisma.notification.count({ where: { userId: user_id, deletedAt: null } });
-  res.status(200).json({ success: true, message: 'Notification count retrieved successfully', data: count, timestamp: new Date().toISOString() });
+export const getNotificationCount = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const user_id = req.user?.userId;
+  if (!user_id) throw new AppError('Unauthorized', 401);
+
+  // Simplified query for MongoDB - removed deletedAt check
+  const count = await prisma.notification.count({ where: { userId: user_id } });
+
+  res.status(200).json({
+    success: true,
+    message: 'Notification count retrieved successfully',
+    data: { count },
+    timestamp: new Date().toISOString(),
+  });
 }); 

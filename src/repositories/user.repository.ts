@@ -1,113 +1,99 @@
-import { User } from '@prisma/client';
-import { CreateUserRequest, UpdateUserRequest } from '../types/user.types';
-import { prisma } from '../config/database';
+import { PrismaClient, User } from '@prisma/client';
+import { AppError } from '../middleware/error.middleware';
+
+const prisma = new PrismaClient();
 
 export class UserRepository {
-  async create(userData: Omit<CreateUserRequest, 'password'> & { hashedPassword: string }): Promise<User> {
-    const { hashedPassword, ...data } = userData;
-    return prisma.user.create({
-      data: {
-        ...data,
-        password: hashedPassword,
+  async findById(id: string): Promise<User | null> {
+    return await prisma.user.findFirst({
+      where: { id },
+      include: {
+        contacts: true,
+        vaults: true,
+        notifications: true,
       },
     });
-  }
-
-  async findById(id: string): Promise<Omit<User, 'password'> | null> {
-    return prisma.user.findFirst({
-      where: { id, deletedAt: null },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        isVerified: true,
-        lastLogin: true,
-        inactivityThresholdDays: true,
-        createdAt: true,
-        updatedAt: true,
-        deletedAt: true,
-      },
-    }) as any;
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    return prisma.user.findFirst({
-      where: { email, deletedAt: null },
+    return await prisma.user.findFirst({
+      where: { email },
+      include: {
+        contacts: true,
+        vaults: true,
+        notifications: true,
+      },
     });
   }
 
-  async findAll(skip: number = 0, take: number = 10): Promise<Array<Omit<User, 'password'>>> {
-    return prisma.user.findMany({
-      where: { deletedAt: null },
-      skip,
-      take,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        isVerified: true,
-        lastLogin: true,
-        inactivityThresholdDays: true,
-        createdAt: true,
-        updatedAt: true,
-        deletedAt: true,
+  async findAll(): Promise<User[]> {
+    return await prisma.user.findMany({
+      include: {
+        contacts: true,
+        vaults: true,
+        notifications: true,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    }) as any;
+    });
   }
 
-  async update(id: string, userData: UpdateUserRequest): Promise<Omit<User, 'password'>> {
-    return prisma.user.update({
+  async create(userData: {
+    email: string;
+    password: string;
+    fullName: string;
+    phone: string;
+    isVerified?: boolean;
+    inactivityThresholdDays?: number;
+  }): Promise<User> {
+    return await prisma.user.create({
+      data: userData,
+    });
+  }
+
+  async update(id: string, userData: Partial<User>): Promise<User> {
+    return await prisma.user.update({
       where: { id },
       data: userData,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        isVerified: true,
-        lastLogin: true,
-        inactivityThresholdDays: true,
-        createdAt: true,
-        updatedAt: true,
-        deletedAt: true,
-      },
-    }) as any;
+    });
   }
 
-  // ✅ Soft delete instead of hard delete
   async delete(id: string): Promise<User> {
-    return prisma.user.update({
+    return await prisma.user.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
   }
 
-  async count(): Promise<number> {
-    return prisma.user.count({
-      where: { deletedAt: null },
+  async softDelete(id: string): Promise<User> {
+    return await prisma.user.update({
+      where: { id },
+      data: { deletedAt: new Date() },
     });
   }
 
-  async exists(id: string): Promise<boolean> {
-    const user = await prisma.user.findFirst({
-      where: { id, deletedAt: null },
-      select: { id: true },
-    });
-    return !!user;
-  }
-
-  // ✅ Optional: Restore soft-deleted user
   async restore(id: string): Promise<User> {
-    return prisma.user.update({
+    return await prisma.user.update({
       where: { id },
       data: { deletedAt: null },
     });
   }
-}
 
-export const userRepository = new UserRepository();
+  async findByEmailAndPassword(email: string, password: string): Promise<User | null> {
+    return await prisma.user.findFirst({
+      where: { email },
+    });
+  }
+
+  async updateLastLogin(id: string): Promise<User> {
+    return await prisma.user.update({
+      where: { id },
+      data: { lastLogin: new Date() },
+    });
+  }
+
+  async updateVerificationStatus(id: string, isVerified: boolean): Promise<User> {
+    return await prisma.user.update({
+      where: { id },
+      data: { isVerified },
+    });
+  }
+}

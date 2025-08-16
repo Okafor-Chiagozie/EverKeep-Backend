@@ -23,7 +23,8 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     email: string; password: string; fullName: string; phone: string;
   };
 
-  const existing = await prisma.user.findFirst({ where: { email, deletedAt: null } });
+  // Simplified query for MongoDB - removed deletedAt check
+  const existing = await prisma.user.findFirst({ where: { email } });
   if (existing) {
     throw new AppError('User with this email already exists', 409);
   }
@@ -72,8 +73,9 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { email, password } = req.body as { email: string; password: string };
 
+  // Simplified query for MongoDB - removed deletedAt check
   const existing = await prisma.user.findFirst({
-    where: { email, deletedAt: null },
+    where: { email },
     select: {
       id: true,
       email: true,
@@ -83,6 +85,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
       isVerified: true,
     },
   });
+  
   if (!existing) {
     throw new AppError('Invalid credentials', 401);
   }
@@ -101,9 +104,6 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   const ua = req.headers['user-agent'];
   ActivityLogger.logLogin(existing.id, { ip, ua: typeof ua === 'string' ? ua : undefined });
 
-  // Log login
-  ActivityLogger.logLogin(existing.id);
-
   const { password: _pw, ...user } = existing;
 
   res.status(200).json({
@@ -119,8 +119,9 @@ export const me = asyncHandler(async (req: AuthenticatedRequest, res: Response) 
     throw new AppError('Unauthorized', 401);
   }
 
+  // Simplified query for MongoDB - removed deletedAt check
   const existing = await prisma.user.findFirst({
-    where: { id: req.user.userId, deletedAt: null },
+    where: { id: req.user.userId },
     select: { id: true, email: true, fullName: true, phone: true, isVerified: true },
   });
 
@@ -147,7 +148,8 @@ export const logout = asyncHandler(async (_req: AuthenticatedRequest, res: Respo
 
 export const requestEmailVerification = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
-  const user = await prisma.user.findFirst({ where: { email, deletedAt: null } });
+  // Simplified query for MongoDB - removed deletedAt check
+  const user = await prisma.user.findFirst({ where: { email } });
   if (!user) throw new AppError('User not found', 404);
 
   const token = generateToken();
@@ -176,7 +178,8 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
 
 export const requestPasswordReset = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
-  const user = await prisma.user.findFirst({ where: { email, deletedAt: null } });
+  // Simplified query for MongoDB - removed deletedAt check
+  const user = await prisma.user.findFirst({ where: { email } });
   if (!user) throw new AppError('User not found', 404);
 
   const token = generateToken();
