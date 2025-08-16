@@ -63,7 +63,7 @@ export const listNotifications = asyncHandler(async (req: Request, res: Response
 
     console.log('✅ Found notifications:', rows.length, 'Total count:', count);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: 'Notifications retrieved successfully',
       data: rows.map(toApi),
@@ -73,7 +73,7 @@ export const listNotifications = asyncHandler(async (req: Request, res: Response
     });
   } catch (error: any) {
     console.error('❌ Error in listNotifications:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Failed to retrieve notifications',
       data: null,

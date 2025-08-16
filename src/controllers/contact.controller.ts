@@ -69,7 +69,7 @@ export const listContacts = asyncHandler(async (req: Request, res: Response) => 
 
     console.log('✅ Found contacts:', rows.length, 'Total count:', count);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: 'Contacts retrieved successfully',
       data: rows.map(toApi),
@@ -79,7 +79,7 @@ export const listContacts = asyncHandler(async (req: Request, res: Response) => 
     });
   } catch (error: any) {
     console.error('❌ Error in listContacts:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Failed to retrieve contacts',
       data: null,

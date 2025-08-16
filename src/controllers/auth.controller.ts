@@ -172,7 +172,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 
     console.log('✅ Login successful');
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: 'Login successful',
       data: { 
@@ -183,7 +183,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('❌ Login error:', err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Login failed',
       data: null,

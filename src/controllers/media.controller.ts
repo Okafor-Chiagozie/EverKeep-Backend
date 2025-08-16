@@ -14,7 +14,7 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const { publicId, url, bytes, format } = req.file as any;
-  res.status(200).json({
+  return res.status(200).json({
     success: true,
     message: 'File uploaded successfully',
     data: { publicId, url, bytes, format },
