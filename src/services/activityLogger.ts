@@ -6,8 +6,9 @@ export class ActivityLogger {
       await prisma.notification.create({
         data: {
           userId,
+          type: 'email',
           title,
-          content: JSON.stringify({
+          message: JSON.stringify({
             description: payload.description,
             type: payload.type,
             metadata: payload.metadata || {},

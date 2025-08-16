@@ -1,40 +1,47 @@
-import { z } from 'zod';
 import dotenv from 'dotenv';
-dotenv.config();
+import path from 'path';
 
-const booleanFromString = z.preprocess((val) => {
-  if (typeof val === 'boolean') return val;
-  if (typeof val === 'number') return val !== 0;
-  if (typeof val === 'string') {
-    const lower = val.toLowerCase();
-    return lower === 'true' || lower === '1' || lower === 'yes' || lower === 'on';
-  }
-  return false;
-}, z.boolean());
+// Load environment variables from .env file
+dotenv.config({ path: path.join(process.cwd(), '.env') });
 
-const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().transform(Number).default('3000'),
-  API_VERSION: z.string().default('v1'),
-  DATABASE_URL: z.string().url(),
-  JWT_SECRET: z.string().min(32),
-  JWT_EXPIRES_IN: z.string().default('7d'),
-  RATE_LIMIT_WINDOW_MS: z.string().transform(Number).default('900000'),
-  RATE_LIMIT_MAX_REQUESTS: z.string().transform(Number).default('100'),
-  CORS_ORIGIN: z.string().default('*'),
-  LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
-  LOG_MAX_SIZE: z.string().default('20m'),
-  LOG_MAX_FILES: z.string().default('14d'),
-  SWAGGER_ENABLED: booleanFromString.default(true),
-});
+export interface EnvConfig {
+  NODE_ENV: string;
+  PORT: number;
+  DATABASE_URL: string;
+  JWT_SECRET: string;
+  JWT_EXPIRES_IN: string;
+  CLOUDINARY_CLOUD_NAME: string;
+  CLOUDINARY_API_KEY: string;
+  CLOUDINARY_API_SECRET: string;
+  RATE_LIMIT_WINDOW_MS: number;
+  RATE_LIMIT_MAX_REQUESTS: number;
+  LOG_LEVEL: string;
+  LOG_MAX_SIZE: string;
+  LOG_MAX_FILES: string;
+  API_VERSION: string;
+}
 
-const validateEnv = () => {
-  try {
-    return envSchema.parse(process.env);
-  } catch (error) {
-    console.error('Environment validation failed:', error);
-    process.exit(1);
-  }
+export const env: EnvConfig = {
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  PORT: parseInt(process.env.PORT || '3000', 10),
+  DATABASE_URL: process.env.DATABASE_URL || 'mongodb://localhost:27017/everkeep',
+  JWT_SECRET: process.env.JWT_SECRET || 'your-secret-key',
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
+  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || '',
+  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || '',
+  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || '',
+  RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
+  RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000', 10),
+  LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+  LOG_MAX_SIZE: process.env.LOG_MAX_SIZE || '20m',
+  LOG_MAX_FILES: process.env.LOG_MAX_FILES || '14d',
+  API_VERSION: process.env.API_VERSION || 'v1',
 };
 
-export const env = validateEnv();
+// Validate required environment variables
+const requiredEnvVars = ['DATABASE_URL', 'JWT_SECRET'];
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.warn(`Warning: ${envVar} environment variable is not set`);
+  }
+}

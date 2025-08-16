@@ -12,7 +12,7 @@ export class AppError extends Error {
     this.isOperational = isOperational;
     
     if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, this.constructor);
+    Error.captureStackTrace(this, this.constructor);
     }
   }
 }

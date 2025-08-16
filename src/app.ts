@@ -19,8 +19,8 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet());
 
-// CORS with multi-origin support (comma-separated in CORS_ORIGIN)
-const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
+// CORS with multi-origin support
+const allowedOrigins = ['http://localhost:5173', 'http://localhost:3000', '*'];
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true); // allow non-browser or same-origin
@@ -47,12 +47,10 @@ app.use(loggerMiddleware);
 app.use(rateLimiterMiddleware);
 
 // API Documentation
-if (env.SWAGGER_ENABLED) {
-  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-}
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Routes
-app.use(`/api/${env.API_VERSION}`, routes);
+app.use(`/api/${env?.API_VERSION || 'v1'}`, routes);
 
 // 404 handler
 app.use('*', (req, res) => {

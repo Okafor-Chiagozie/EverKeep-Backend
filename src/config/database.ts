@@ -1,29 +1,47 @@
 // src/config/database.ts
 
 import { PrismaClient } from '@prisma/client';
+import { env } from './env';
 import { logger } from './logger';
 
+// Create Prisma client instance
 const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  log: env?.NODE_ENV === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
 });
 
-export const connectToDatabase = async () => {
+// Connect to database
+export const connectDatabase = async (): Promise<void> => {
   try {
     await prisma.$connect();
-    logger.info('✅ Database connected successfully');
+    logger.info('✅ Successfully connected to MongoDB database');
   } catch (error) {
-    logger.error('❌ Failed to connect to the database:', error);
+    logger.error('❌ Failed to connect to MongoDB database:', error);
     process.exit(1);
   }
 };
 
-export const disconnectFromDatabase = async () => {
+// Disconnect from database
+export const disconnectDatabase = async (): Promise<void> => {
   try {
     await prisma.$disconnect();
-    logger.info('🔌 Database connection closed');
+    logger.info('✅ Successfully disconnected from MongoDB database');
   } catch (error) {
-    logger.warn('⚠️ Error while disconnecting from the database:', error);
+    logger.error('❌ Error disconnecting from MongoDB database:', error);
   }
 };
 
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  logger.info('🔄 Received SIGINT, shutting down gracefully...');
+  await disconnectDatabase();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  logger.info('🔄 Received SIGTERM, shutting down gracefully...');
+  await disconnectDatabase();
+  process.exit(0);
+});
+
+export default prisma;
 export { prisma };

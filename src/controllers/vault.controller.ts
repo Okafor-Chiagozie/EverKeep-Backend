@@ -64,15 +64,13 @@ const toRecipientApi = (r: any) => ({
     : null,
 });
 
-export const getVaults = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
+export const listVaults = asyncHandler(async (req: Request, res: Response) => {
+  const { pageSize = 10, pageNumber = 1, user_id, search } = req.query as any;
+  const take = Number(pageSize);
+  const skip = (Number(pageNumber) - 1) * take;
 
-  const { page = 1, limit = 10, search } = req.query as any;
-  const skip = (page - 1) * limit;
-
-  // Simplified query for MongoDB - removed deletedAt check
-  const where: any = {};
+  const where: any = { deletedAt: null };
+  if (user_id) where.userId = user_id;
   if (search) {
     where.OR = [
       { name: { contains: search, mode: 'insensitive' } },
@@ -80,242 +78,171 @@ export const getVaults = asyncHandler(async (req: AuthenticatedRequest, res: Res
     ];
   }
 
-  const [vaults, total] = await Promise.all([
-    prisma.vault.findMany({
-      where: { ...where, userId: user_id },
-      skip,
-      take: parseInt(limit),
-      orderBy: { timestamp: 'desc' },
-      include: {
-        entries: {
-          take: 5,
-          orderBy: { timestamp: 'desc' },
-        },
-        recipients: {
-          include: {
-            contact: true,
-          },
-        },
-      },
-    }),
-    prisma.vault.count({ where: { ...where, userId: user_id } }),
+  const [rows, totalCount] = await Promise.all([
+    prisma.vault.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
+    prisma.vault.count({ where }),
   ]);
+
+  // Decrypt names/descriptions for response with fallback for legacy data
+  const decrypted = await Promise.all(rows.map(async (v) => ({
+    ...v,
+    name: await decryptWithFallback(v.name, v.userId, v.id),
+    description: await decryptWithFallback(v.description, v.userId, v.id),
+  })));
 
   res.status(200).json({
     success: true,
     message: 'Vaults retrieved successfully',
-    data: vaults,
-    pagination: {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      total,
-      pages: Math.ceil(total / limit),
-    },
+    data: decrypted.map(toApi),
+    totalCount,
+    totalPages: Math.ceil(totalCount / take),
     timestamp: new Date().toISOString(),
   });
 });
 
-export const getVaultById = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
-
-  // Simplified query for MongoDB - removed deletedAt check
-  const v = await prisma.vault.findFirst({ where: { id } });
+export const getVaultById = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params as { id: string };
+  const v = await prisma.vault.findFirst({ where: { id, deletedAt: null } });
   if (!v) throw new AppError('Vault not found', 404);
-  if (v.userId !== user_id) throw new AppError('Unauthorized', 401);
 
-  const vault = await prisma.vault.findFirst({
-    where: { id },
-    include: {
-      entries: {
-        orderBy: { timestamp: 'desc' },
-      },
-      recipients: {
-        include: {
-          contact: true,
-        },
-      },
-    },
-  });
+  const decrypted = {
+    ...v,
+    name: await decryptWithFallback(v.name, v.userId, v.id),
+    description: await decryptWithFallback(v.description, v.userId, v.id),
+  };
 
-  res.status(200).json({
-    success: true,
-    message: 'Vault retrieved successfully',
-    data: vault,
-    timestamp: new Date().toISOString(),
-  });
+  res.status(200).json({ success: true, message: 'Vault retrieved successfully', data: toApi(decrypted), timestamp: new Date().toISOString() });
 });
 
 export const createVault = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
+  const { name, description } = req.body as { name: string; description?: string };
+  const userId = req.user!.userId;
 
-  const { name, description, deliveredAtDate } = req.body as any;
+  // Encrypt name/description at rest (temporary using placeholder vault id)
+  const encryptedName = EncryptionUtils.encryptText(name, userId, 'new');
+  const encryptedDescription = description ? EncryptionUtils.encryptText(description, userId, 'new') : null;
 
-  if (!name) throw new AppError('Vault name is required', 400);
+  const v = await prisma.vault.create({ data: { userId, name: encryptedName, description: encryptedDescription } });
 
-  const vault = await prisma.vault.create({
-    data: {
-      name,
-      description,
-      deliveredAtDate: deliveredAtDate ? new Date(deliveredAtDate) : null,
-      userId: user_id,
-    },
-  });
+  // Re-encrypt using the actual vault ID so future decrypts work
+  const correctEncryptedName = EncryptionUtils.encryptText(name, userId, v.id);
+  const correctEncryptedDescription = description ? EncryptionUtils.encryptText(description, userId, v.id) : null;
+  if (correctEncryptedName !== encryptedName || correctEncryptedDescription !== encryptedDescription) {
+    await prisma.vault.update({
+      where: { id: v.id },
+      data: {
+        name: correctEncryptedName,
+        description: correctEncryptedDescription,
+      },
+    });
+  }
 
-  res.status(201).json({
-    success: true,
-    message: 'Vault created successfully',
-    data: vault,
-    timestamp: new Date().toISOString(),
-  });
+  ActivityLogger.logVault(userId, 'created', { vaultId: v.id, name });
+
+  // Return decrypted values to client
+  const responseVault = { ...v, name, description: description ?? null };
+
+  res.status(201).json({ success: true, message: 'Vault created successfully', data: toApi(responseVault), timestamp: new Date().toISOString() });
 });
 
-export const updateVault = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
+export const updateVault = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params as { id: string };
+  const { name, description } = req.body as { name?: string; description?: string };
 
-  const { name, description, deliveredAtDate } = req.body as any;
+  const existing = await prisma.vault.findFirst({ where: { id } });
+  if (!existing) throw new AppError('Vault not found', 404);
 
-  const vault = await prisma.vault.findFirst({ where: { id, userId: user_id } });
-  if (!vault) throw new AppError('Vault not found', 404);
+  const encryptedUpdate: any = {};
+  if (name !== undefined) encryptedUpdate.name = EncryptionUtils.encryptText(name, existing.userId, id);
+  if (description !== undefined) encryptedUpdate.description = description ? EncryptionUtils.encryptText(description, existing.userId, id) : null;
 
-  const updatedVault = await prisma.vault.update({
-    where: { id },
-    data: {
-      name,
-      description,
-      deliveredAtDate: deliveredAtDate ? new Date(deliveredAtDate) : null,
-    },
-  });
+  const v = await prisma.vault.update({ where: { id }, data: encryptedUpdate });
 
-  res.status(200).json({
-    success: true,
-    message: 'Vault updated successfully',
-    data: updatedVault,
-    timestamp: new Date().toISOString(),
-  });
+  ActivityLogger.logVault(v.userId, 'updated', { vaultId: v.id, name: name ?? undefined });
+
+  // Return decrypted view
+  const responseVault = {
+    ...v,
+    name: name ?? (EncryptionUtils.safeDecrypt(v.name, v.userId, v.id) || v.name),
+    description: description ?? (v.description ? (EncryptionUtils.safeDecrypt(v.description, v.userId, v.id) || v.description) : null),
+  };
+
+  res.status(200).json({ success: true, message: 'Vault updated successfully', data: toApi(responseVault), timestamp: new Date().toISOString() });
 });
 
-export const deleteVault = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
+export const deleteVault = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params as { id: string };
+  const v = await prisma.vault.update({ where: { id }, data: { deletedAt: new Date() } });
+  await prisma.vaultEntry.updateMany({ where: { vaultId: id }, data: { deletedAt: new Date() } });
+  await prisma.vaultRecipient.updateMany({ where: { vaultId: id }, data: { deletedAt: new Date() } });
 
-  const vault = await prisma.vault.findFirst({ where: { id, userId: user_id } });
-  if (!vault) throw new AppError('Vault not found', 404);
+  ActivityLogger.logVault(v.userId, 'deleted', { vaultId: v.id });
 
-  await prisma.vault.delete({ where: { id } });
-
-  res.status(200).json({
-    success: true,
-    message: 'Vault deleted successfully',
-    data: null,
-    timestamp: new Date().toISOString(),
-  });
+  res.status(200).json({ success: true, message: 'Vault deleted successfully', data: null, timestamp: new Date().toISOString() });
 });
 
-export const getVaultEntries = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
+export const listVaultEntries = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params as { id: string };
+  const rows = await prisma.vaultEntry.findMany({ where: { vaultId: id, deletedAt: null }, orderBy: { createdAt: 'desc' } });
 
-  const vault = await prisma.vault.findFirst({ where: { id, userId: user_id } });
-  if (!vault) throw new AppError('Vault not found', 404);
+  // decrypt entries for response using vault.userId
+  const vault = await prisma.vault.findFirst({ where: { id } });
+  const userId = vault?.userId || '';
+  const decrypted = rows.map(e => ({ ...e, content: e.content ? EncryptionUtils.safeDecrypt(e.content, userId, id) : e.content }));
 
-  // Simplified query for MongoDB - removed deletedAt check
-  const rows = await prisma.vaultEntry.findMany({ 
-    where: { vaultId: id }, 
-    orderBy: { timestamp: 'desc' } 
-  });
-
-  res.status(200).json({
-    success: true,
-    message: 'Vault entries retrieved successfully',
-    data: rows,
-    timestamp: new Date().toISOString(),
-  });
+  res.status(200).json({ success: true, message: 'Vault entries retrieved successfully', data: decrypted.map(toEntryApi), timestamp: new Date().toISOString() });
 });
 
-export const createVaultEntry = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
+export const createVaultEntry = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params as { id: string };
+  const { type, content, parent_id } = req.body as { type: string; content: string; parent_id?: string };
 
-  const { type, content, parent_id } = req.body as any;
-
-  if (!type || !content) throw new AppError('Type and content are required', 400);
-
-  const vault = await prisma.vault.findFirst({ where: { id, userId: user_id } });
+  // Encrypt content before storing
+  const vault = await prisma.vault.findFirst({ where: { id } });
   if (!vault) throw new AppError('Vault not found', 404);
+  const encrypted = EncryptionUtils.encryptText(content, vault.userId, id);
 
-  const entry = await prisma.vaultEntry.create({
-    data: {
-      type,
-      content,
-      vaultId: id,
-      parentId: parent_id || null,
-    },
-  });
+  const entry = await prisma.vaultEntry.create({ data: { vaultId: id, type, content: encrypted, parentId: parent_id ?? null } });
 
-  res.status(201).json({
-    success: true,
-    message: 'Vault entry created successfully',
-    data: entry,
-    timestamp: new Date().toISOString(),
-  });
+  if (vault) ActivityLogger.logEntry(vault.userId, 'added', { entryType: type, vaultId: id, vaultName: EncryptionUtils.safeDecrypt(vault.name, vault.userId, id) });
+
+  // Return original content to client
+  const responseEntry = { ...entry, content } as any;
+
+  res.status(201).json({ success: true, message: 'Vault entry created successfully', data: toEntryApi(responseEntry), timestamp: new Date().toISOString() });
 });
 
-export const updateVaultEntry = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { id, entryId } = req.params;
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
+export const deleteVaultEntry = asyncHandler(async (req: Request, res: Response) => {
+  const { entryId } = req.params as { entryId: string };
+  const entry = await prisma.vaultEntry.update({ where: { id: entryId }, data: { deletedAt: new Date() } });
 
-  const { content } = req.body as any;
+  const v = await prisma.vault.findFirst({ where: { id: entry.vaultId } });
+  if (v) ActivityLogger.logEntry(v.userId, 'deleted', { entryType: entry.type, vaultId: v.id, vaultName: EncryptionUtils.safeDecrypt(v.name, v.userId, v.id) });
 
-  if (!content) throw new AppError('Content is required', 400);
-
-  const vault = await prisma.vault.findFirst({ where: { id, userId: user_id } });
-  if (!vault) throw new AppError('Vault not found', 404);
-
-  const entry = await prisma.vaultEntry.update({
-    where: { id: entryId },
-    data: { content },
-  });
-
-  res.status(200).json({
-    success: true,
-    message: 'Vault entry updated successfully',
-    data: entry,
-    timestamp: new Date().toISOString(),
-  });
+  res.status(200).json({ success: true, message: 'Vault entry deleted successfully', data: null, timestamp: new Date().toISOString() });
 });
 
-export const deleteVaultEntry = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { id, entryId } = req.params;
-  const user_id = req.user?.userId;
-  if (!user_id) throw new AppError('Unauthorized', 401);
+export const updateVaultEntry = asyncHandler(async (req: Request, res: Response) => {
+  const { entryId } = req.params as { entryId: string };
+  const { content } = req.body as { content: string };
 
-  const vault = await prisma.vault.findFirst({ where: { id, userId: user_id } });
+  const existing = await prisma.vaultEntry.findFirst({ where: { id: entryId, deletedAt: null } });
+  if (!existing) throw new AppError('Entry not found', 404);
+
+  const vault = await prisma.vault.findFirst({ where: { id: existing.vaultId } });
   if (!vault) throw new AppError('Vault not found', 404);
 
-  await prisma.vaultEntry.delete({ where: { id: entryId } });
+  const encrypted = EncryptionUtils.encryptText(content, vault.userId, existing.vaultId);
+  const updated = await prisma.vaultEntry.update({ where: { id: entryId }, data: { content: encrypted } });
 
-  res.status(200).json({
-    success: true,
-    message: 'Vault entry deleted successfully',
-    data: null,
-    timestamp: new Date().toISOString(),
-  });
+  res.status(200).json({ success: true, message: 'Vault entry updated successfully', data: { ...updated, content }, timestamp: new Date().toISOString() });
 });
 
 export const listVaultRecipients = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params as { id: string };
   const rows = await prisma.vaultRecipient.findMany({
     where: { vaultId: id, deletedAt: null },
-    orderBy: { timestamp: 'desc' },
+    orderBy: { createdAt: 'desc' },
     include: { contact: true },
   });
   res.status(200).json({ success: true, message: 'Vault recipients retrieved successfully', data: rows.map(toRecipientApi), timestamp: new Date().toISOString() });
