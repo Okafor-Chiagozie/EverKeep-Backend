@@ -27,7 +27,7 @@ export const createVaultEntryDto = z.object({
   body: z.object({
     type: z.string().min(1),
     content: z.string().min(1),
-    parent_id: z.string().uuid().optional(),
+    parent_id: z.string().regex(/^[0-9a-fA-F]{24}$/).optional(), // MongoDB ObjectId format
   }),
 });
 
@@ -38,8 +38,11 @@ export const updateVaultEntryDto = z.object({
 });
 
 export const addVaultRecipientDto = z.object({
+  params: z.object({
+    id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid vault ID'),
+  }),
   body: z.object({
-    contact_id: z.string(),
+    contact_id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid contact ID'),
   }),
 });
 

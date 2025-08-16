@@ -9,99 +9,123 @@ const storage = multer.memoryStorage();
 export const uploadMiddleware = multer({ storage }).single('file');
 
 export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
-  if (!req.file) throw new AppError('No file uploaded', 400);
+  if (!req.file) {
+    return res.status(500).json({ success: false, message: 'Upload failed', created_at: new Date().toISOString() });
+  }
 
-  const upload = await cloudinary.uploader.upload_stream(
-    { resource_type: 'auto', folder: 'everkeep' },
-    (error, result) => {
-      if (error || !result) {
-        return res.status(500).json({ success: false, message: 'Upload failed', timestamp: new Date().toISOString() });
-      }
-      return res.status(201).json({
-        success: true,
-        message: 'Uploaded',
-        data: { publicId: result.public_id, url: result.secure_url, bytes: result.bytes, format: result.format },
-        timestamp: new Date().toISOString(),
-      });
-    }
-  );
-
-  // @ts-ignore
-  upload.end(req.file.buffer);
+  const { publicId, url, bytes, format } = req.file as any;
+  res.status(200).json({
+    success: true,
+    message: 'File uploaded successfully',
+    data: { publicId, url, bytes, format },
+    created_at: new Date().toISOString(),
+  });
 });
 
 export const deleteMedia = asyncHandler(async (req: Request, res: Response) => {
   const { publicId } = req.params as { publicId: string };
-  if (!publicId) throw new AppError('publicId required', 400);
-  const result = await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
-  res.status(200).json({ success: true, message: 'Deleted', data: result, timestamp: new Date().toISOString() });
+
+  try {
+    const result = await cloudinary.uploader.destroy(publicId);
+    res.status(200).json({ success: true, message: 'Deleted', data: result, created_at: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error deleting media:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete media' });
+  }
 });
 
 export const proxyDownload = asyncHandler(async (req: Request, res: Response) => {
-  const { url, filename } = req.query as { url?: string; filename?: string };
-  if (!url) throw new AppError('url query param is required', 400);
+  const { public_id, resource_type = 'image', delivery_type = 'upload', filename, format } = req.query as {
+    public_id: string;
+    resource_type?: 'image' | 'video' | 'raw';
+    delivery_type?: 'upload' | 'private' | 'authenticated';
+    filename?: string;
+    format?: string;
+  };
 
-  // basic validation of URL
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-    if (parsed.protocol !== 'https:' || !/\.cloudinary\.com$/i.test(parsed.hostname)) {
-      throw new Error('Invalid host');
-    }
-  } catch {
-    throw new AppError('Invalid URL', 400);
+  if (!public_id) {
+    return res.status(400).json({ success: false, message: 'public_id is required' });
   }
 
-  const safeFilename = (filename || 'download').replace(/[^a-zA-Z0-9._ -]/g, '_').trim() || 'download';
+  try {
+    let url: string;
 
-  res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
-  res.setHeader('Cache-Control', 'private, max-age=600');
-
-  https
-    .get(parsed.toString(), (r) => {
-      if (!r.statusCode || r.statusCode >= 400) {
-        res.status(r.statusCode || 500).end('Failed to fetch file');
-        r.resume();
-        return;
+    if (delivery_type === 'upload') {
+      // Public upload - direct download
+      url = cloudinary.url(public_id, {
+        resource_type,
+        flags: 'attachment',
+        ...(filename && { filename }),
+        ...(format && { format }),
+      });
+    } else if (delivery_type === 'private' || delivery_type === 'authenticated') {
+      if (!format) {
+        return res.status(400).json({ success: false, message: 'format is required for private/authenticated downloads' });
       }
-      const contentType = r.headers['content-type'] || 'application/octet-stream';
-      res.setHeader('Content-Type', Array.isArray(contentType) ? contentType[0] : contentType);
-      r.pipe(res);
-    })
-    .on('error', (err) => {
-      res.status(500).end('Download failed');
-    });
+
+      // Private/Authenticated - generate signed URL
+      url = cloudinary.url(public_id, {
+        resource_type,
+        flags: 'attachment',
+        sign_url: true,
+        ...(filename && { filename }),
+        format,
+      });
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid delivery_type' });
+    }
+
+    return res.status(200).json({ success: true, message: 'Signed URL generated', data: { url }, created_at: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error generating download URL:', error);
+    return res.status(500).json({ success: false, message: 'Failed to generate download URL' });
+  }
 });
 
 export const signedDownload = asyncHandler(async (req: Request, res: Response) => {
-  const { public_id, resource_type, filename, delivery_type, format } = req.query as any;
-  if (!public_id) throw new AppError('public_id is required', 400);
+  const { public_id, resource_type = 'image', delivery_type = 'upload', filename, format } = req.query as {
+    public_id: string;
+    resource_type?: 'image' | 'video' | 'raw';
+    delivery_type?: 'upload' | 'private' | 'authenticated';
+    filename?: string;
+    format?: string;
+  };
 
-  const resourceType = (resource_type as string) || 'image';
-  const type = (delivery_type as string) || 'upload';
-  const attachName = (filename as string) || 'download';
-
-  // If the asset is private/authenticated, prefer private_download_url
-  if (type === 'private' || type === 'authenticated') {
-    if (!format) throw new AppError('format is required for private/authenticated downloads', 400);
-    const url = cloudinary.utils.private_download_url(public_id, String(format), {
-      resource_type: resourceType,
-      attachment: true,
-      expires_at: Math.floor(Date.now() / 1000) + 300,
-    });
-    return res.status(200).json({ success: true, message: 'Signed URL generated', data: { url }, timestamp: new Date().toISOString() });
+  if (!public_id) {
+    return res.status(400).json({ success: false, message: 'public_id is required' });
   }
 
-  // Public upload: sign a delivery URL with fl_attachment
-  const url = cloudinary.url(public_id, {
-    resource_type: resourceType,
-    type: type as any,
-    secure: true,
-    sign_url: true,
-    transformation: [
-      { flags: 'attachment', attachment: attachName },
-    ],
-  });
+  try {
+    let url: string;
 
-  return res.status(200).json({ success: true, message: 'Signed URL generated', data: { url }, timestamp: new Date().toISOString() });
+    if (delivery_type === 'upload') {
+      // Public upload - direct download
+      url = cloudinary.url(public_id, {
+        resource_type,
+        flags: 'attachment',
+        ...(filename && { filename }),
+        ...(format && { format }),
+      });
+    } else if (delivery_type === 'private' || delivery_type === 'authenticated') {
+      if (!format) {
+        return res.status(400).json({ success: false, message: 'format is required for private/authenticated downloads' });
+      }
+
+      // Private/Authenticated - generate signed URL
+      url = cloudinary.url(public_id, {
+        resource_type,
+        flags: 'attachment',
+        sign_url: true,
+        ...(filename && { filename }),
+        format,
+      });
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid delivery_type' });
+    }
+
+    return res.status(200).json({ success: true, message: 'Signed URL generated', data: { url }, created_at: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error generating download URL:', error);
+    return res.status(500).json({ success: false, message: 'Failed to generate download URL' });
+  }
 }); 

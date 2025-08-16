@@ -56,7 +56,10 @@ describe('Users', () => {
   it('GET /users/:id returns user', async () => {
     mockPrisma.user.findFirst.mockResolvedValueOnce({
       id: 'u1', email: 'a@b.com', fullName: 'N', phone: '123', isVerified: false,
-      lastLogin: new Date(), inactivityThresholdDays: 60, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+      lastLogin: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isDeleted: false,
     });
 
     const res = await request(app)
@@ -100,7 +103,7 @@ describe('Vaults', () => {
   });
 
   it('POST /vaults/:id/entries creates entry', async () => {
-    mockPrisma.vaultEntry.create.mockResolvedValueOnce({ id: 'e1', vaultId: 'v1', type: 'text', content: 'c', timestamp: new Date(), createdAt: new Date(), updatedAt: new Date() });
+    mockPrisma.vaultEntry.create.mockResolvedValueOnce({ id: 'e1', vaultId: 'v1', type: 'text', content: 'c', createdAt: new Date(), updatedAt: new Date() });
 
     const res = await request(app)
       .post(`/api/${env.API_VERSION}/vaults/v1/entries`)

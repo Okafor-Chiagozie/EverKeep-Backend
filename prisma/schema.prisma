@@ -13,18 +13,19 @@ datasource db {
 model User {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   email     String   @unique
-  password  String
   fullName  String?
   phone     String?
+  password  String
   isVerified Boolean @default(false)
+  isDeleted Boolean  @default(false)
   lastLogin DateTime?
+  inactivityThresholdDays Int @default(30)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  deletedAt DateTime?
 
   // Relations
-  contacts    Contact[]
-  vaults      Vault[]
+  contacts      Contact[]
+  vaults       Vault[]
   notifications Notification[]
 
   @@map("users")
@@ -33,17 +34,17 @@ model User {
 model Contact {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   userId    String   @db.ObjectId
-  email     String
   fullName  String
+  email     String
   phone     String?
   relationship String?
   isVerified Boolean @default(false)
+  isDeleted Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  deletedAt DateTime?
 
   // Relations
-  user           User         @relation(fields: [userId], references: [id])
+  user           User            @relation(fields: [userId], references: [id])
   vaultRecipients VaultRecipient[]
 
   @@unique([userId, email])
@@ -51,19 +52,19 @@ model Contact {
 }
 
 model Vault {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId      String   @db.ObjectId
-  name        String
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  name      String
   description String?
-  isActive    Boolean  @default(true)
-  deadmanTrigger Int?
+  isActive  Boolean  @default(true)
+  deadmanTrigger DateTime?
   encryptionKey String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  user           User           @relation(fields: [userId], references: [id])
+  user           User            @relation(fields: [userId], references: [id])
   entries        VaultEntry[]
   recipients     VaultRecipient[]
 
@@ -73,18 +74,17 @@ model Vault {
 model VaultEntry {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   vaultId   String   @db.ObjectId
-  parentId  String?  @db.ObjectId
   type      String   // 'text', 'image', 'video', 'audio', 'document'
   content   String
-  timestamp DateTime @default(now())
+  parentId  String?  @db.ObjectId
+  isDeleted Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  deletedAt DateTime?
 
   // Relations
-  vault           Vault         @relation(fields: [vaultId], references: [id])
-  parent          VaultEntry?   @relation("EntryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children        VaultEntry[]  @relation("EntryHierarchy")
+  vault       Vault         @relation(fields: [vaultId], references: [id])
+  parent      VaultEntry?   @relation("EntryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children    VaultEntry[]  @relation("EntryHierarchy")
 
   @@map("vault_entries")
 }
@@ -93,30 +93,28 @@ model VaultRecipient {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   vaultId   String   @db.ObjectId
   contactId String   @db.ObjectId
-  role      String   @default("recipient") // 'owner', 'recipient', 'viewer'
+  isDeleted Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  deletedAt DateTime?
 
   // Relations
-  vault    Vault    @relation(fields: [vaultId], references: [id])
-  contact  Contact  @relation(fields: [contactId], references: [id])
+  vault   Vault   @relation(fields: [vaultId], references: [id])
+  contact Contact @relation(fields: [contactId], references: [id])
 
-  @@unique([vaultId, contactId])
   @@map("vault_recipients")
 }
 
 model Notification {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   userId    String   @db.ObjectId
-  type      String   // 'email', 'push', 'sms'
+  type      String   // 'email', 'system', 'vault', etc.
   title     String
   message   String
   isRead    Boolean  @default(false)
   metadata  Json?
+  isDeleted Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  deletedAt DateTime?
 
   // Relations
   user User @relation(fields: [userId], references: [id])

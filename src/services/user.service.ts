@@ -34,7 +34,7 @@ export class UserService {
 
   async getUserByEmail(email: string): Promise<User | null> {
     const user = await this.userRepo.findByEmail(email);
-    return user && !user.deletedAt ? user : null;
+    return user && !user.isDeleted ? user : null;
   }
 
   async getAllUsers(pagination: PaginationParams) {

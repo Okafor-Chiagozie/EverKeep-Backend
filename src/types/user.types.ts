@@ -1,13 +1,13 @@
 export interface User {
   id: string;
   email: string;
-  fullName: string | null;
-  phone: string | null;
+  fullName?: string;
+  phone?: string;
   isVerified: boolean;
-  lastLogin: Date | null;
+  isDeleted: boolean;
+  lastLogin?: Date;
   createdAt: Date;
   updatedAt: Date;
-  deletedAt?: Date | null;
 }
 
 export interface CreateUserRequest {

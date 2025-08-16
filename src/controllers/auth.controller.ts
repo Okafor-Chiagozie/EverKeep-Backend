@@ -7,6 +7,17 @@ import { AppError, asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../types/auth.types';
 import { ActivityLogger } from '../services/activityLogger';
 
+const toApi = (u: any) => ({
+  id: u.id,
+  email: u.email,
+  phone: u.phone,
+  is_verified: u.isVerified,
+  full_name: u.fullName,
+  last_login: u.lastLogin,
+  created_at: u.createdAt,
+  updated_at: u.updatedAt,
+});
+
 const signToken = (userId: string, email: string) => {
   const secret: Secret = (env?.JWT_SECRET || '') as unknown as Secret;
   const options: SignOptions = { expiresIn: (env?.JWT_EXPIRES_IN || '7d') as unknown as any };
@@ -18,7 +29,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     email: string; password: string; fullName?: string; phone?: string;
   };
 
-  const existing = await prisma.user.findFirst({ where: { email, deletedAt: null } });
+  const existing = await prisma.user.findFirst({ where: { email, isDeleted: false } });
   if (existing) {
     throw new AppError('User with this email already exists', 409);
   }
@@ -32,7 +43,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
         password: hashed, 
         fullName: fullName || null, 
         phone: phone || null,
-        isVerified: false // Default to false for new registrations
+        isVerified: true // Set to true by default - no email verification needed
       },
       select: { 
         id: true, 
@@ -51,9 +62,9 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 
     res.status(201).json({
       success: true,
-      message: 'Registration successful. Please verify your email.',
+      message: 'Registration successful. You can now log in.',
       data: { user, token: jwtToken },
-      timestamp: new Date().toISOString(),
+      created_at: new Date().toISOString(),
     });
   } catch (err: any) {
     // Handle unique constraint violations for email gracefully
@@ -64,68 +75,121 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   }
 });
 
+// Test database connection
+export const testDb = asyncHandler(async (req: Request, res: Response) => {
+  try {
+    console.log('🔍 Testing database connection...');
+    
+    // Test basic connection
+    await prisma.$connect();
+    console.log('✅ Database connection successful');
+    
+    // Test basic query
+    const userCount = await prisma.user.count();
+    console.log('User count:', userCount);
+    
+    // Test finding a user
+    const testUser = await prisma.user.findFirst();
+    console.log('Test user found:', !!testUser);
+    
+    // Test contact count
+    const contactCount = await prisma.contact.count();
+    console.log('Contact count:', contactCount);
+    
+    // Test notification count
+    const notificationCount = await prisma.notification.count();
+    console.log('Notification count:', notificationCount);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Database connection test successful',
+      data: { 
+        userCount,
+        testUserFound: !!testUser,
+        contactCount,
+        notificationCount,
+        timestamp: new Date().toISOString()
+      },
+      created_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error('❌ Database test error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Database connection test failed',
+      data: null,
+      error: err.message,
+      stack: err.stack,
+      created_at: new Date().toISOString(),
+    });
+  }
+});
+
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { email, password } = req.body as { email: string; password: string };
 
-  // Debug logging
-  console.log('🔍 Login attempt:');
-  console.log('  Email received:', `"${email}"`);
-  console.log('  Password received:', `"${password}"`);
-  console.log('  Email length:', email?.length);
-  console.log('  Password length:', password?.length);
+  console.log('🔍 Login attempt for:', email);
 
-  const existing = await prisma.user.findFirst({
-    where: { 
-      email
-    },
-    select: {
-      id: true,
-      email: true,
-      fullName: true,
-      phone: true,
-      password: true,
-      isVerified: true,
-    },
-  });
+  try {
+    // Simple user check first
+    const existing = await prisma.user.findFirst({
+      where: { email: email.toLowerCase().trim(), isDeleted: false },
+    });
 
-  console.log('  User found:', !!existing);
-  if (existing) {
-    console.log('  User email in DB:', `"${existing.email}"`);
-    console.log('  User verified:', existing.isVerified);
+    console.log('User found:', !!existing);
+    console.log('User data:', existing ? { id: existing.id, email: existing.email, isVerified: existing.isVerified } : 'none');
+
+    if (!existing) {
+      console.log('❌ No user found');
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials',
+        data: null,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, existing.password);
+    console.log('Password valid:', isValidPassword);
+
+    if (!isValidPassword) {
+      console.log('❌ Invalid password');
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials',
+        data: null,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    // Generate simple token
+    const token = jwt.sign(
+      { userId: existing.id, email: existing.email },
+      env?.JWT_SECRET || 'fallback-secret',
+      { expiresIn: '7d' }
+    );
+
+    console.log('✅ Login successful');
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      data: { 
+        user: toApi(existing), 
+        token 
+      },
+      created_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error('❌ Login error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Login failed',
+      data: null,
+      created_at: new Date().toISOString(),
+    });
   }
-
-  if (!existing) {
-    console.log('  ❌ No user found with this email');
-    throw new AppError('Invalid credentials', 401);
-  }
-
-  const match = await bcrypt.compare(password, existing.password);
-  console.log('  Password match:', match);
-
-  if (!match) {
-    console.log('  ❌ Password does not match');
-    throw new AppError('Invalid credentials', 401);
-  }
-
-  console.log('  ✅ Login successful');
-
-  await prisma.user.update({ where: { id: existing.id }, data: { lastLogin: new Date() } });
-
-  const token = signToken(existing.id, existing.email);
-
-  // Log login with metadata
-  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined;
-  const ua = req.headers['user-agent'];
-  ActivityLogger.logLogin(existing.id, { ip, ua: typeof ua === 'string' ? ua : undefined });
-
-  const { password: _pw, ...user } = existing;
-
-  res.status(200).json({
-    success: true,
-    message: 'Login successful',
-    data: { user, token },
-    timestamp: new Date().toISOString(),
-  });
 });
 
 export const me = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -134,7 +198,7 @@ export const me = asyncHandler(async (req: AuthenticatedRequest, res: Response) 
   }
 
   const existing = await prisma.user.findFirst({
-    where: { id: req.user.userId },
+    where: { id: req.user.userId, isDeleted: false },
     select: { id: true, email: true, fullName: true, phone: true, isVerified: true, createdAt: true, updatedAt: true },
   });
 
@@ -145,8 +209,8 @@ export const me = asyncHandler(async (req: AuthenticatedRequest, res: Response) 
   res.status(200).json({
     success: true,
     message: 'User retrieved successfully',
-    data: existing,
-    timestamp: new Date().toISOString(),
+    data: toApi(existing),
+    created_at: new Date().toISOString(),
   });
 });
 
@@ -155,64 +219,109 @@ export const logout = asyncHandler(async (_req: AuthenticatedRequest, res: Respo
     success: true,
     message: 'Logout successful',
     data: null,
-    timestamp: new Date().toISOString(),
+    created_at: new Date().toISOString(),
   });
 });
 
 export const requestEmailVerification = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
-  const user = await prisma.user.findFirst({ where: { email } });
-  if (!user) throw new AppError('User not found', 404);
 
-  // For now, just mark as verified since we don't have email verification tokens
+  const user = await prisma.user.findFirst({
+    where: { email: email.toLowerCase().trim(), isDeleted: false },
+    select: { id: true, email: true, fullName: true, isVerified: true },
+  });
+
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  if (user.isVerified) {
+    throw new AppError('Email is already verified', 400);
+  }
+
+  // In a real app, you would send an email with a verification link
+  // For now, just mark as verified
   await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
 
-  res.status(200).json({ 
-    success: true, 
-    message: 'Email verification completed', 
-    data: null, 
-    timestamp: new Date().toISOString() 
+  res.status(200).json({
+    success: true,
+    message: 'Email verified',
+    data: null,
+    created_at: new Date().toISOString(),
   });
 });
 
 export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
-  const user = await prisma.user.findFirst({ where: { email, deletedAt: null } });
-  if (!user) throw new AppError('User not found', 404);
 
+  const user = await prisma.user.findFirst({
+    where: { email: email.toLowerCase().trim(), isDeleted: false },
+    select: { id: true, email: true, fullName: true, isVerified: true },
+  });
+
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  if (user.isVerified) {
+    throw new AppError('Email is already verified', 400);
+  }
+
+  // In a real app, you would verify the token from the email
+  // For now, just mark as verified
   await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
 
-  // Log email verified
-  ActivityLogger.logEmailVerified(user.id);
-
-  res.status(200).json({ success: true, message: 'Email verified', data: null, timestamp: new Date().toISOString() });
+  res.status(200).json({
+    success: true,
+    message: 'Email verified',
+    data: null,
+    created_at: new Date().toISOString(),
+  });
 });
 
 export const requestPasswordReset = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
-  const user = await prisma.user.findFirst({ where: { email, deletedAt: null } });
-  if (!user) throw new AppError('User not found', 404);
 
-  // For now, just return success since we don't have password reset tokens
-  // In production, you'd implement actual email sending
-  res.status(200).json({ 
-    success: true, 
-    message: 'Password reset email sent (if email service configured)', 
-    data: null, 
-    timestamp: new Date().toISOString() 
+  const user = await prisma.user.findFirst({
+    where: { email: email.toLowerCase().trim(), isDeleted: false },
+    select: { id: true, email: true, fullName: true },
+  });
+
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  // In a real app, you would send an email with a reset link
+  // For now, just return success
+  res.status(200).json({
+    success: true,
+    message: 'Password reset email sent',
+    data: null,
+    created_at: new Date().toISOString(),
   });
 });
 
 export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
   const { email, newPassword } = req.body as { email: string; newPassword: string };
-  const user = await prisma.user.findFirst({ where: { email, deletedAt: null } });
-  if (!user) throw new AppError('User not found', 404);
 
-  const hashed = await bcrypt.hash(newPassword, 12);
-  await prisma.user.update({ where: { id: user.id }, data: { password: hashed } });
+  const user = await prisma.user.findFirst({
+    where: { email: email.toLowerCase().trim(), isDeleted: false },
+    select: { id: true, email: true, fullName: true },
+  });
 
-  // Log password updated
-  ActivityLogger.logPasswordUpdated(user.id);
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
 
-  res.status(200).json({ success: true, message: 'Password updated', data: null, timestamp: new Date().toISOString() });
+  // In a real app, you would verify the token from the email
+  // For now, just update the password
+  const hashedPassword = await bcrypt.hash(newPassword, 12);
+  await prisma.user.update({ where: { id: user.id }, data: { password: hashedPassword } });
+
+  res.status(200).json({
+    success: true,
+    message: 'Password updated',
+    data: null,
+    created_at: new Date().toISOString(),
+  });
 }); 

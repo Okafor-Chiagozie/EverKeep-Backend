@@ -1,13 +1,26 @@
 import { Request, Response } from 'express';
+import { asyncHandler } from '../middleware/error.middleware';
 
-export const health = (_req: Request, res: Response) => {
+export const healthCheck = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
-    message: 'OK',
-    data: {
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-    },
-    timestamp: new Date().toISOString(),
+    message: 'Server is healthy',
+    data: { status: 'ok', uptime: process.uptime() },
+    created_at: new Date().toISOString(),
   });
-};
+});
+
+export const healthCheckDetailed = asyncHandler(async (req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    message: 'Detailed health check',
+    data: {
+      status: 'ok',
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      version: process.version,
+      platform: process.platform,
+    },
+    created_at: new Date().toISOString(),
+  });
+});
