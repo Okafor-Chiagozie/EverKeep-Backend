@@ -122,7 +122,7 @@ export const createContact = asyncHandler(async (req: Request, res: Response) =>
       // Don't fail the contact creation if logging fails
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: 'Contact created successfully',
       data: toApi(contact),
@@ -207,7 +207,7 @@ export const updateContact = asyncHandler(async (req: Request, res: Response) =>
       // Don't fail the contact update if logging fails
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: 'Contact updated successfully',
       data: toApi(updated),

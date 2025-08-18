@@ -45,8 +45,10 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
       hashedPassword: hashed, 
       fullName: fullName || null, 
       phone: phone || null,
-      lastLogin: new Date(), // Set initial lastLogin
     });
+
+    // Set initial lastLogin after user creation
+    await userRepository.update(user._id.toString(), { lastLogin: new Date() });
 
     const jwtToken = signToken(user._id.toString(), user.email);
 
