@@ -1,106 +1,87 @@
-import { User } from '@prisma/client';
+import { User, IUser } from '../models/User';
 import { CreateUserRequest, UpdateUserRequest } from '../types/user.types';
-import { prisma } from '../config/database';
 
 export class UserRepository {
-  async create(userData: Omit<CreateUserRequest, 'password'> & { hashedPassword: string }): Promise<User> {
+  async create(userData: Omit<CreateUserRequest, 'password'> & { hashedPassword: string }): Promise<IUser> {
     const { hashedPassword, ...data } = userData;
-    return prisma.user.create({
-      data: {
-        ...data,
-        password: hashedPassword,
-      },
+    const user = new User({
+      ...data,
+      password: hashedPassword,
     });
+    return user.save();
   }
 
-  async findById(id: string): Promise<Omit<User, 'password'> | null> {
-    return prisma.user.findFirst({
-      where: { id, isDeleted: false },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        isVerified: true,
-        lastLogin: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    }) as any;
+  async findById(id: string): Promise<Omit<IUser, 'password'> | null> {
+    const user = await User.findOne({ _id: id, isDeleted: false })
+      .select('-password')
+      .lean();
+    return user;
   }
 
-  async findByEmail(email: string): Promise<User | null> {
-    return prisma.user.findFirst({
-      where: { email, isDeleted: false },
-    });
+  async findByEmail(email: string): Promise<IUser | null> {
+    return User.findOne({ email, isDeleted: false });
   }
 
-  async findAll(skip: number = 0, take: number = 10): Promise<Array<Omit<User, 'password'>>> {
-    return prisma.user.findMany({
-      where: { isDeleted: false },
-      skip,
-      take,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        isVerified: true,
-        lastLogin: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    }) as any;
+  async findAll(skip: number = 0, take: number = 10): Promise<Array<Omit<IUser, 'password'>>> {
+    return User.find({ isDeleted: false })
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(take)
+      .lean();
   }
 
-  async update(id: string, userData: UpdateUserRequest): Promise<Omit<User, 'password'>> {
-    return prisma.user.update({
-      where: { id },
-      data: userData,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        isVerified: true,
-        lastLogin: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    }) as any;
+  async update(id: string, userData: UpdateUserRequest): Promise<Omit<IUser, 'password'>> {
+    const user = await User.findByIdAndUpdate(
+      id,
+      { ...userData, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    ).select('-password');
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    return user;
   }
 
   // ✅ Soft delete using isDeleted flag
-  async delete(id: string): Promise<User> {
-    return prisma.user.update({
-      where: { id },
-      data: { isDeleted: true },
-    });
+  async delete(id: string): Promise<IUser> {
+    const user = await User.findByIdAndUpdate(
+      id,
+      { isDeleted: true, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    );
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    return user;
   }
 
   async count(): Promise<number> {
-    return prisma.user.count({
-      where: { isDeleted: false },
-    });
+    return User.countDocuments({ isDeleted: false });
   }
 
   async exists(id: string): Promise<boolean> {
-    const user = await prisma.user.findFirst({
-      where: { id, isDeleted: false },
-      select: { id: true },
-    });
+    const user = await User.findOne({ _id: id, isDeleted: false }).select('_id');
     return !!user;
   }
 
   // ✅ Restore soft-deleted user
-  async restore(id: string): Promise<User> {
-    return prisma.user.update({
-      where: { id },
-      data: { isDeleted: false },
-    });
+  async restore(id: string): Promise<IUser> {
+    const user = await User.findByIdAndUpdate(
+      id,
+      { isDeleted: false, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    );
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    return user;
   }
 }
 

@@ -1,22 +1,25 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt, { Secret, SignOptions } from 'jsonwebtoken';
-import { prisma } from '../config/database';
 import { env } from '../config/env';
 import { AppError, asyncHandler } from '../middleware/error.middleware';
 import { AuthenticatedRequest } from '../types/auth.types';
 import { ActivityLogger } from '../services/activityLogger';
+import { userRepository } from '../repositories';
 
-const toApi = (u: any) => ({
-  id: u.id,
-  email: u.email,
-  phone: u.phone,
-  is_verified: u.isVerified,
-  full_name: u.fullName,
-  last_login: u.lastLogin,
-  created_at: u.createdAt,
-  updated_at: u.updatedAt,
-});
+const toApi = (u: any) => {
+  const doc = u._doc || u;
+  return {
+    id: doc._id?.toString() || doc._id,
+    email: doc.email,
+    phone: doc.phone,
+    is_verified: doc.isVerified,
+    full_name: doc.fullName,
+    last_login: doc.lastLogin,
+    created_at: doc.createdAt,
+    updated_at: doc.updatedAt,
+  };
+};
 
 const signToken = (userId: string, email: string) => {
   const secret: Secret = (env?.JWT_SECRET || '') as unknown as Secret;
@@ -29,7 +32,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     email: string; password: string; fullName?: string; phone?: string;
   };
 
-  const existing = await prisma.user.findFirst({ where: { email, isDeleted: false } });
+  const existing = await userRepository.findByEmail(email);
   if (existing) {
     throw new AppError('User with this email already exists', 409);
   }
@@ -37,39 +40,36 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   const hashed = await bcrypt.hash(password, 12);
 
   try {
-    const user = await prisma.user.create({
-      data: { 
-        email, 
-        password: hashed, 
-        fullName: fullName || null, 
-        phone: phone || null,
-        isVerified: true // Set to true by default - no email verification needed
-      },
-      select: { 
-        id: true, 
-        email: true, 
-        fullName: true, 
-        phone: true, 
-        isVerified: true,
-        createdAt: true 
-      },
+    const user = await userRepository.create({
+      email, 
+      hashedPassword: hashed, 
+      fullName: fullName || null, 
+      phone: phone || null,
+      lastLogin: new Date(), // Set initial lastLogin
     });
 
-    const jwtToken = signToken(user.id, user.email);
+    const jwtToken = signToken(user._id.toString(), user.email);
 
     // Log registration
-    ActivityLogger.logRegistration(user.id);
+    console.log('🔍 Creating registration notification for user:', user._id.toString());
+    try {
+      await ActivityLogger.logRegistration(user._id.toString());
+      console.log('✅ Registration notification created successfully');
+    } catch (error) {
+      console.error('❌ Failed to create registration notification:', error);
+      // Don't fail the registration if notification fails
+    }
 
     res.status(201).json({
       success: true,
       message: 'Registration successful. You can now log in.',
-      data: { user, token: jwtToken },
+      data: { user: toApi(user), token: jwtToken },
       created_at: new Date().toISOString(),
     });
   } catch (err: any) {
     // Handle unique constraint violations for email gracefully
-    if (err.code === 'P2002' && err.meta?.target?.includes('email')) {
-      throw new AppError('User with this email already exists', 409);
+    if (err.code === 11000 && err.keyPattern?.email) {
+        throw new AppError('User with this email already exists', 409);
     }
     throw err;
   }
@@ -81,23 +81,22 @@ export const testDb = asyncHandler(async (req: Request, res: Response) => {
     console.log('🔍 Testing database connection...');
     
     // Test basic connection
-    await prisma.$connect();
     console.log('✅ Database connection successful');
     
     // Test basic query
-    const userCount = await prisma.user.count();
+    const userCount = await userRepository.count();
     console.log('User count:', userCount);
     
     // Test finding a user
-    const testUser = await prisma.user.findFirst();
+    const testUser = await userRepository.findByEmail('admin@everkeep.com');
     console.log('Test user found:', !!testUser);
     
-    // Test contact count
-    const contactCount = await prisma.contact.count();
+    // Test contact count - we'll need to implement this
+    const contactCount = 0; // TODO: implement contact count
     console.log('Contact count:', contactCount);
     
-    // Test notification count
-    const notificationCount = await prisma.notification.count();
+    // Test notification count - we'll need to implement this
+    const notificationCount = 0; // TODO: implement notification count
     console.log('Notification count:', notificationCount);
     
     res.status(200).json({
@@ -132,12 +131,10 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 
   try {
     // Simple user check first
-    const existing = await prisma.user.findFirst({
-      where: { email: email.toLowerCase().trim(), isDeleted: false },
-    });
+    const existing = await userRepository.findByEmail(email.toLowerCase().trim());
 
     console.log('User found:', !!existing);
-    console.log('User data:', existing ? { id: existing.id, email: existing.email, isVerified: existing.isVerified } : 'none');
+    console.log('User data:', existing ? { id: existing._id, email: existing.email, isVerified: existing.isVerified } : 'none');
 
     if (!existing) {
       console.log('❌ No user found');
@@ -163,12 +160,37 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
       });
     }
 
+    // Update lastLogin timestamp
+    const updatedUser = await userRepository.update(existing._id.toString(), {
+      lastLogin: new Date()
+    });
+
     // Generate simple token
     const token = jwt.sign(
-      { userId: existing.id, email: existing.email },
+      { userId: existing._id.toString(), email: existing.email },
       env?.JWT_SECRET || 'fallback-secret',
       { expiresIn: '7d' }
     );
+
+    // Log successful login with IP and user agent info
+    const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
+    const userAgent = req.get('User-Agent') || 'unknown';
+    
+    console.log('🔍 Creating login notification for user:', existing._id.toString());
+    console.log('🔍 IP Address:', ipAddress);
+    console.log('🔍 User Agent:', userAgent);
+    
+    try {
+      await ActivityLogger.logLogin(existing._id.toString(), {
+        ip: ipAddress,
+        ua: userAgent,
+        location: 'unknown' // Could be enhanced with IP geolocation
+      });
+      console.log('✅ Login notification created successfully');
+    } catch (error) {
+      console.error('❌ Failed to create login notification:', error);
+      // Don't fail the login if notification fails
+    }
 
     console.log('✅ Login successful');
 
@@ -176,7 +198,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
       success: true,
       message: 'Login successful',
       data: { 
-        user: toApi(existing), 
+        user: toApi(updatedUser), 
         token 
       },
       created_at: new Date().toISOString(),
@@ -197,10 +219,7 @@ export const me = asyncHandler(async (req: AuthenticatedRequest, res: Response) 
     throw new AppError('Unauthorized', 401);
   }
 
-  const existing = await prisma.user.findFirst({
-    where: { id: req.user.userId, isDeleted: false },
-    select: { id: true, email: true, fullName: true, phone: true, isVerified: true, createdAt: true, updatedAt: true },
-  });
+  const existing = await userRepository.findById(req.user.userId);
 
   if (!existing) {
     throw new AppError('User not found', 404);
@@ -214,22 +233,40 @@ export const me = asyncHandler(async (req: AuthenticatedRequest, res: Response) 
   });
 });
 
-export const logout = asyncHandler(async (_req: AuthenticatedRequest, res: Response) => {
-  res.status(200).json({
-    success: true,
-    message: 'Logout successful',
-    data: null,
-    created_at: new Date().toISOString(),
-  });
+export const logout = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user?.userId) {
+    throw new AppError('Unauthorized', 401);
+  }
+
+  try {
+    // Log logout activity
+    ActivityLogger.logLogout(req.user.userId, {
+      ip: req.ip || req.connection.remoteAddress || 'unknown',
+      ua: req.get('User-Agent') || 'unknown',
+      location: 'unknown'
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Logout successful',
+      data: null,
+      created_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(200).json({
+      success: true,
+      message: 'Logout successful',
+      data: null,
+      created_at: new Date().toISOString(),
+    });
+  }
 });
 
 export const requestEmailVerification = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
 
-  const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase().trim(), isDeleted: false },
-    select: { id: true, email: true, fullName: true, isVerified: true },
-  });
+  const user = await userRepository.findByEmail(email.toLowerCase().trim());
 
   if (!user) {
     throw new AppError('User not found', 404);
@@ -241,7 +278,7 @@ export const requestEmailVerification = asyncHandler(async (req: Request, res: R
 
   // In a real app, you would send an email with a verification link
   // For now, just mark as verified
-  await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
+  await userRepository.update(user._id.toString(), { isVerified: true });
 
   res.status(200).json({
     success: true,
@@ -254,10 +291,7 @@ export const requestEmailVerification = asyncHandler(async (req: Request, res: R
 export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
 
-  const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase().trim(), isDeleted: false },
-    select: { id: true, email: true, fullName: true, isVerified: true },
-  });
+  const user = await userRepository.findByEmail(email.toLowerCase().trim());
 
   if (!user) {
     throw new AppError('User not found', 404);
@@ -269,7 +303,7 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
 
   // In a real app, you would verify the token from the email
   // For now, just mark as verified
-  await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
+  await userRepository.update(user._id.toString(), { isVerified: true });
 
   res.status(200).json({
     success: true,
@@ -282,10 +316,7 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
 export const requestPasswordReset = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
 
-  const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase().trim(), isDeleted: false },
-    select: { id: true, email: true, fullName: true },
-  });
+  const user = await userRepository.findByEmail(email.toLowerCase().trim());
 
   if (!user) {
     throw new AppError('User not found', 404);
@@ -304,10 +335,7 @@ export const requestPasswordReset = asyncHandler(async (req: Request, res: Respo
 export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
   const { email, newPassword } = req.body as { email: string; newPassword: string };
 
-  const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase().trim(), isDeleted: false },
-    select: { id: true, email: true, fullName: true },
-  });
+  const user = await userRepository.findByEmail(email.toLowerCase().trim());
 
   if (!user) {
     throw new AppError('User not found', 404);
@@ -316,7 +344,7 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
   // In a real app, you would verify the token from the email
   // For now, just update the password
   const hashedPassword = await bcrypt.hash(newPassword, 12);
-  await prisma.user.update({ where: { id: user.id }, data: { password: hashedPassword } });
+  await userRepository.update(user._id.toString(), { password: hashedPassword });
 
   res.status(200).json({
     success: true,

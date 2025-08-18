@@ -1,22 +1,36 @@
-import { prisma } from '../config/database';
+import { Notification } from '../models';
 
 export class ActivityLogger {
-  private static async create(userId: string, title: string, payload: { description: string; type: string; metadata?: Record<string, any> }) {
+  private static async create(userId: string, title: string, payload: { description: string; type: string; metadata?: Record<string, any>; timestamp?: string }) {
     try {
-      await prisma.notification.create({
-        data: {
-          userId,
-          type: 'email',
-          title,
-          message: JSON.stringify({
-            description: payload.description,
-            type: payload.type,
-            metadata: payload.metadata || {},
-            timestamp: new Date().toISOString(),
-          }),
-        },
+      // Extract timestamp from payload or use current time
+      const eventTimestamp = payload.timestamp ? new Date(payload.timestamp) : new Date();
+      
+      console.log('🔍 ActivityLogger: Creating notification');
+      console.log('🔍 User ID:', userId);
+      console.log('🔍 Title:', title);
+      console.log('🔍 Payload:', payload);
+      console.log('🔍 Event Timestamp:', eventTimestamp);
+      
+      const notification = await Notification.create({
+        userId,
+        type: 'email',
+        title,
+        message: JSON.stringify({
+          description: payload.description,
+          type: payload.type,
+          metadata: payload.metadata || {},
+          timestamp: eventTimestamp.toISOString(),
+        }),
+        timestamp: eventTimestamp, // Set the actual event timestamp
       });
+      
+      console.log('✅ ActivityLogger: Notification created successfully');
+      console.log('✅ Notification ID:', notification._id);
+      console.log('✅ Saved timestamp:', notification.timestamp);
+      
     } catch (err) {
+      console.error('❌ ActivityLogger: Failed to create notification:', err);
       // Do not block main flow on logging issues
       // Silently fail on logging errors
     }
@@ -27,6 +41,15 @@ export class ActivityLogger {
     return this.create(userId, 'Account accessed', {
       description: `Successful login from ${location}`,
       type: 'login',
+      metadata: { ipAddress: details?.ip, userAgent: details?.ua, location: details?.location },
+    });
+  }
+
+  static async logLogout(userId: string, details?: { ip?: string; ua?: string; location?: string }) {
+    const location = details?.location || details?.ip || 'unknown location';
+    return this.create(userId, 'Account logged out', {
+      description: `User logged out from ${location}`,
+      type: 'logout',
       metadata: { ipAddress: details?.ip, userAgent: details?.ua, location: details?.location },
     });
   }
@@ -59,15 +82,36 @@ export class ActivityLogger {
     });
   }
 
+  static async logUserSettingsUpdated(userId: string, settings: string[]) {
+    const settingsList = settings.join(', ');
+    return this.create(userId, 'Settings updated', {
+      description: `Updated account settings: ${settingsList}`,
+      type: 'system_event',
+      metadata: { updatedSettings: settings },
+    });
+  }
+
   static async logContact(userId: string, action: 'added' | 'updated' | 'deleted', name?: string) {
-    const base = name ? `${name}` : 'contact';
+    const contactName = name || 'Contact';
     const map: Record<typeof action, { title: string; description: string; type: string }> = {
-      added: { title: `Added ${base}`, description: 'New trusted contact added to your network', type: 'contact_added' },
-      updated: { title: `Updated ${base}`, description: 'Contact information and settings modified', type: 'contact_updated' },
-      deleted: { title: `Removed ${base}`, description: 'Contact removed from your account', type: 'contact_deleted' },
+      added: { 
+        title: `Added contact - ${contactName}`, 
+        description: `New trusted contact "${contactName}" added to your network`, 
+        type: 'contact_added' 
+      },
+      updated: { 
+        title: `Updated contact - ${contactName}`, 
+        description: `Contact "${contactName}" information and settings modified`, 
+        type: 'contact_updated' 
+      },
+      deleted: { 
+        title: `Removed contact - ${contactName}`, 
+        description: `Contact "${contactName}" removed from your account and all vaults`, 
+        type: 'contact_deleted' 
+      },
     };
     const cfg = map[action];
-    return this.create(userId, cfg.title, { description: cfg.description, type: cfg.type, metadata: { contactName: name } });
+    return this.create(userId, cfg.title, { description: cfg.description, type: cfg.type, metadata: { contactName } });
   }
 
   static async logVault(userId: string, action: 'created' | 'updated' | 'deleted', extras?: { vaultId?: string; name?: string }) {
@@ -98,16 +142,23 @@ export class ActivityLogger {
   }
 
   static async logRecipient(userId: string, action: 'added' | 'removed', extras?: { vaultId?: string; vaultName?: string; contactId?: string; contactName?: string; vaultRecipientId?: string }) {
+    const contactName = extras?.contactName || 'Recipient';
+    const vaultName = extras?.vaultName || 'Vault';
+    
     const title = action === 'added'
-      ? (extras?.vaultName && extras?.contactName ? `Added ${extras.contactName} to "${extras.vaultName}"` : 'Recipient added')
-      : (extras?.contactName && extras?.vaultName ? `Removed ${extras.contactName} from "${extras.vaultName}"` : 'Recipient removed');
-    const description = action === 'added' ? 'Contact assigned as recipient for vault delivery' : 'Contact no longer assigned to this vault';
+      ? `Added recipient - ${contactName}`
+      : `Removed recipient - ${contactName}`;
+      
+    const description = action === 'added' 
+      ? `Contact "${contactName}" assigned as recipient for vault "${vaultName}"` 
+      : `Contact "${contactName}" removed as recipient from vault "${vaultName}"`;
+      
     const type = action === 'added' ? 'recipient_added' : 'recipient_removed';
 
     return this.create(userId, title, {
       description,
       type,
-      metadata: { vaultId: extras?.vaultId, vaultName: extras?.vaultName, contactId: extras?.contactId, contactName: extras?.contactName, vaultRecipientId: extras?.vaultRecipientId },
+      metadata: { vaultId: extras?.vaultId, vaultName, contactId: extras?.contactId, contactName, vaultRecipientId: extras?.vaultRecipientId },
     });
   }
 } 

@@ -1,65 +1,50 @@
 import { Request, Response } from 'express';
-import { asyncHandler } from '../middleware/error.middleware';
-import { prisma } from '../config/database';
+import mongoose from 'mongoose';
+import { asyncHandler, AppError } from '../middleware/error.middleware';
+import { ActivityLogger } from '../services/activityLogger';
+import { notificationRepository } from '../repositories';
 
-const toApi = (n: any) => ({
-  id: n.id,
-  user_id: n.userId,
-  title: n.title,
-  content: n.message,
-  created_at: n.createdAt,
-  updated_at: n.updatedAt,
-});
+const toApi = (n: any) => {
+  const doc = n._doc || n;
+  return {
+    id: doc._id?.toString() || doc._id,
+    user_id: doc.userId?.toString() || doc.userId,
+    type: doc.type,
+    title: doc.title,
+    message: doc.message,
+    timestamp: doc.createdAt, // Map createdAt to timestamp for frontend
+    isRead: doc.isRead,
+    metadata: doc.metadata,
+    created_at: doc.createdAt,
+    updated_at: doc.updatedAt,
+  };
+};
 
 export const listNotifications = asyncHandler(async (req: Request, res: Response) => {
   try {
     console.log('🔍 listNotifications called with query:', req.query);
     
-    // Test database connection first
-    try {
-      await prisma.$connect();
-      console.log('✅ Database connection successful');
-    } catch (dbError: any) {
-      console.error('❌ Database connection failed:', dbError);
-      return res.status(500).json({
-        success: false,
-        message: 'Database connection failed',
-        data: null,
-        error: dbError.message,
-        created_at: new Date().toISOString(),
-      });
-    }
-    
-    const { pageSize = '10', pageNumber = '1', user_id, title, message, search } = req.query as any;
+    const { pageSize = '10', pageNumber = '1', user_id, type, isRead } = req.query as any;
     
     // Convert string parameters to integers
     const pageSizeInt = parseInt(pageSize as string, 10);
     const pageNumberInt = parseInt(pageNumber as string, 10);
     
-    const where: any = { isDeleted: false };
+    // For now, we'll implement basic filtering
+    // TODO: Implement more advanced filtering with Mongoose
+    const skip = (pageNumberInt - 1) * pageSizeInt;
+    const take = pageSizeInt;
+
+    console.log('🔍 Pagination:', { pageSizeInt, pageNumberInt, skip, take });
+
+    // Get notifications for the user if user_id is provided
+    let rows: any[] = [];
+    let count = 0;
     
-    if (user_id) where.userId = user_id;
-    if (title) where.title = { contains: title, mode: 'insensitive' };
-    if (message) where.message = { contains: message, mode: 'insensitive' };
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { message: { contains: search, mode: 'insensitive' } },
-      ];
+    if (user_id) {
+      rows = await notificationRepository.findAll(user_id, skip, take);
+      count = await notificationRepository.count(user_id);
     }
-
-    console.log('🔍 Where clause:', JSON.stringify(where, null, 2));
-    console.log('🔍 Pagination:', { pageSizeInt, pageNumberInt, skip: (pageNumberInt - 1) * pageSizeInt, take: pageSizeInt });
-
-    const [rows, count] = await Promise.all([
-      prisma.notification.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (pageNumberInt - 1) * pageSizeInt,
-        take: pageSizeInt,
-      }),
-      prisma.notification.count({ where }),
-    ]);
 
     console.log('✅ Found notifications:', rows.length, 'Total count:', count);
 
@@ -83,20 +68,41 @@ export const listNotifications = asyncHandler(async (req: Request, res: Response
   }
 });
 
+export const getNotificationById = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params as { id: string };
+  const notification = await notificationRepository.findById(id);
+  if (!notification) throw new AppError('Notification not found', 404);
+  res.status(200).json({ success: true, message: 'Notification retrieved successfully', data: toApi(notification), created_at: new Date().toISOString() });
+});
+
 export const createNotification = asyncHandler(async (req: Request, res: Response) => {
-  const { user_id, title, message } = req.body as { user_id: string; title: string; message: string };
-  const n = await prisma.notification.create({ data: { userId: user_id, type: 'email', title, message } });
-  res.status(201).json({ success: true, message: 'Notification created successfully', data: toApi(n), created_at: new Date().toISOString() });
+  const { user_id, type, title, message } = req.body as { user_id: string; type: string; title: string; message: string };
+
+  const notification = await notificationRepository.create({
+    userId: new mongoose.Types.ObjectId(user_id),
+    type,
+    title,
+    message,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Notification created successfully',
+    data: toApi(notification),
+    created_at: new Date().toISOString(),
+  });
 });
 
 export const deleteNotification = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params as { id: string };
-  await prisma.notification.update({ where: { id }, data: { isDeleted: true } });
+  await notificationRepository.delete(id);
+
   res.status(200).json({ success: true, message: 'Notification deleted successfully', data: null, created_at: new Date().toISOString() });
 });
 
-export const getUserNotificationCount = asyncHandler(async (req: Request, res: Response) => {
-  const { user_id } = req.query as { user_id: string };
-  const count = await prisma.notification.count({ where: { userId: user_id, isDeleted: false } });
-  res.status(200).json({ success: true, message: 'Notification count retrieved successfully', data: count, created_at: new Date().toISOString() });
+export const getUnreadCount = asyncHandler(async (req: Request, res: Response) => {
+  const { user_id } = req.params as { user_id: string };
+  const count = await notificationRepository.countUnread(user_id);
+
+  res.status(200).json({ success: true, message: 'Unread count retrieved successfully', data: { count }, created_at: new Date().toISOString() });
 }); 

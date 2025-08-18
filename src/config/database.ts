@@ -1,18 +1,13 @@
 // src/config/database.ts
 
-import { PrismaClient } from '@prisma/client';
+import mongoose from 'mongoose';
 import { env } from './env';
 import { logger } from './logger';
-
-// Create Prisma client instance
-const prisma = new PrismaClient({
-  log: env?.NODE_ENV === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
-});
 
 // Connect to database
 export const connectDatabase = async (): Promise<void> => {
   try {
-    await prisma.$connect();
+    await mongoose.connect(env.DATABASE_URL);
     logger.info('✅ Successfully connected to MongoDB database');
   } catch (error) {
     logger.error('❌ Failed to connect to MongoDB database:', error);
@@ -23,7 +18,7 @@ export const connectDatabase = async (): Promise<void> => {
 // Disconnect from database
 export const disconnectDatabase = async (): Promise<void> => {
   try {
-    await prisma.$disconnect();
+    await mongoose.disconnect();
     logger.info('✅ Successfully disconnected from MongoDB database');
   } catch (error) {
     logger.error('❌ Error disconnecting from MongoDB database:', error);
@@ -43,5 +38,5 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-export default prisma;
-export { prisma };                                                                                    
+export default mongoose;
+export { mongoose };                                                                                    

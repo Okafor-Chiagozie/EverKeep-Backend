@@ -34,7 +34,22 @@ export class UserService {
 
   async getUserByEmail(email: string): Promise<User | null> {
     const user = await this.userRepo.findByEmail(email);
-    return user && !user.isDeleted ? user : null;
+    if (user && !user.isDeleted) {
+      return {
+        _id: user._id.toString(),
+        email: user.email,
+        fullName: user.fullName,
+        phone: user.phone,
+        password: user.password,
+        isVerified: user.isVerified,
+        isDeleted: user.isDeleted,
+        lastLogin: user.lastLogin,
+        inactivityThresholdDays: user.inactivityThresholdDays,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+    }
+    return null;
   }
 
   async getAllUsers(pagination: PaginationParams) {
