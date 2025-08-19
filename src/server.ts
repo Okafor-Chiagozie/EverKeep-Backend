@@ -22,7 +22,13 @@ app.use(helmet());
 
 // CORS configuration for frontend access
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:4173'],
+  origin: [
+    'http://localhost:5173', 
+    'http://localhost:3000', 
+    'http://localhost:4173',
+    'https://ever-keep.vercel.app',
+    'https://ever-keep-git-main-everkeep.vercel.app'
+  ],
   credentials: true,
   optionsSuccessStatus: 204,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
