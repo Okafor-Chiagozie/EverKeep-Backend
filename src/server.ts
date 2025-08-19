@@ -43,7 +43,7 @@ app.use(loggerMiddleware);
 app.use(rateLimiterMiddleware);
 
 // Routes
-app.use(`/api/${env?.API_VERSION || 'v1'}`, routes);
+app.use(`/${env?.API_VERSION || 'v1'}`, routes);
 
 // Error handling middleware (must be last)
 app.use(errorMiddleware);
